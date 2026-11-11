@@ -1,0 +1,4 @@
+streamlit>=1.32
+requests>=2.31
+# 桌面挂件（desktop_app.py）用；复用系统 WebView2，不需要打 Chromium
+pywebview>=6.0

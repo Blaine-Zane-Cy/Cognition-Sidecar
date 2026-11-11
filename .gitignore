@@ -1,0 +1,24 @@
+# ---- 用户数据与密钥：绝不入库 ----
+data/*
+!data/find_python.bat
+secrets.json
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# ---- 本地成品与发布资产（独立版只作为 Release 附件分发） ----
+认知掌控侧车-独立版/
+*.zip
+
+# ---- 本地工作区 ----
+__pycache__/
+*.pyc
+.venv/
+_smoke.py
+.workbuddy/
+.streamlit/secrets.toml
+发布指南-GitHub首发.md
+推送到GitHub.bat
+网页上传专用/
+*.lnk
