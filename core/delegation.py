@@ -7,8 +7,8 @@ from .models import SLOT_LABELS
 REQUIRED = ("goal", "deliverable", "success_criteria")
 
 
-def generate(slots: dict, skipped: list) -> dict:
-    payload = {"slots": slots, "skipped": skipped}
+def generate(slots: dict, skipped: list, brief: str = "") -> dict:
+    payload = {"slots": slots, "skipped": skipped, "brief": brief}
     raw = llm.call(
         "delegation",
         payload,
@@ -16,19 +16,19 @@ def generate(slots: dict, skipped: list) -> dict:
         prompts.delegation_user(payload),
         temperature=0.2,
     )
-    card = normalize(raw, slots)
+    card = normalize(raw, slots, brief)
     issues = validate(card, skipped)
     if issues:
         card["issues"] = issues
     return card
 
 
-def from_slots(slots: dict) -> dict:
+def from_slots(slots: dict, brief: str = "") -> dict:
     """不经过模型，直接用槽位拼一张卡（模型失败时的降级路径）。"""
-    return normalize({}, slots)
+    return normalize({}, slots, brief)
 
 
-def normalize(raw: dict, slots: dict) -> dict:
+def normalize(raw: dict, slots: dict, brief: str = "") -> dict:
     goal = str(raw.get("goal") or slots.get("goal") or "").strip()
     deliverable = str(raw.get("deliverable") or slots.get("deliverable") or "").strip()
     boundaries = str(raw.get("boundaries") or slots.get("boundaries") or "").strip()
@@ -61,6 +61,7 @@ def normalize(raw: dict, slots: dict) -> dict:
         "forbidden": forbidden or "无",
         "success_criteria": clean,
         "keywords": keywords,
+        "brief": (brief or "").strip(),
         "issues": [],
     }
 
@@ -100,6 +101,11 @@ def render_text(card: dict) -> str:
     数据模型里仍保留 keywords，编辑表单也还在，只是不进这份可复制文本。
     """
     lines = [f"【委托卡 v{card.get('version', 1)}】", ""]
+    brief = (card.get("brief") or "").strip()
+    if brief:
+        lines.append("—— 原始构想（你的需求背景，务必先读这一段）——")
+        lines.append(brief)
+        lines.append("")
     lines.append(f"目标：{card.get('goal', '')}")
     lines.append(f"交付物：{card.get('deliverable', '')}")
     lines.append(f"边界：{card.get('boundaries', '') or '（未限定）'}")
@@ -121,6 +127,7 @@ def to_payload(card: dict) -> dict:
         "forbidden": card.get("forbidden", ""),
         "success_criteria": card.get("success_criteria", []),
         "keywords": card.get("keywords", []),
+        "brief": card.get("brief", ""),
     }
 
 
@@ -135,6 +142,7 @@ def save(session_id: str, card: dict) -> str:
         forbidden=card.get("forbidden", "无"),
         success_criteria=card.get("success_criteria", []),
         keywords=card.get("keywords", []),
+        brief=card.get("brief", ""),
     )
 
 

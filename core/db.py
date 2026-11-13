@@ -230,6 +230,8 @@ MIGRATIONS = [
     ("findings", "chosen", "TEXT NOT NULL DEFAULT ''"),
     # 审阅分支：空 = 主干。老库里已有的消息天然全是主干，不需要回填。
     ("messages", "branch_id", "TEXT"),
+    # 委托卡保留用户的原始构想，避免澄清后只剩结构化槽位、丢掉了需求背景。
+    ("delegations", "brief", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -916,13 +918,14 @@ def create_delegation(
     forbidden: str,
     success_criteria: list,
     keywords: list,
+    brief: str = "",
 ) -> str:
     did = new_id("d-")
     _exec(
         """INSERT INTO delegations
            (id, session_id, version, goal, deliverable, boundaries, forbidden,
-            success_criteria_json, keywords_json, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            success_criteria_json, keywords_json, brief, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
         (
             did,
             session_id,
@@ -933,6 +936,7 @@ def create_delegation(
             forbidden,
             json.dumps(success_criteria, ensure_ascii=False),
             json.dumps(keywords, ensure_ascii=False),
+            brief,
             now(),
         ),
     )
@@ -958,6 +962,7 @@ def _expand_delegation(row: Optional[dict]) -> Optional[dict]:
     row = dict(row)
     row["success_criteria"] = json.loads(row.pop("success_criteria_json") or "[]")
     row["keywords"] = json.loads(row.pop("keywords_json") or "[]")
+    row["brief"] = (row.get("brief") or "").strip()
     return row
 
 

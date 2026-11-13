@@ -171,8 +171,13 @@ def _transcript(sid: str) -> None:
     """唯一的消息渲染入口：每次 rerun 全量重绘，不做任何"追加"。
 
     failure 也占一格 —— 模型挂了不能表现成"你的话没人接"。
+    最新一条助手提问用打字机效果，制造"实时在想"的对话感；用消息 id 去重，历史不重播。
     """
-    for msg in db.list_messages(sid):
+    msgs = db.list_messages(sid)
+    typed = st.session_state.setdefault("_typed_ids", set())
+    last_id = msgs[-1]["id"] if msgs else None
+
+    for msg in msgs:
         kind = msg["kind"]
         if kind == "brief":
             with st.chat_message("user"):
@@ -187,6 +192,11 @@ def _transcript(sid: str) -> None:
                 f'<div style="font-size:12px;color:{components.MUTED};margin:2px 0 8px;">'
                 f"{html.escape(msg['content'])}</div>",
             )
+        elif kind == "question" and msg["id"] == last_id and msg["id"] not in typed:
+            # 只有最新一条提问才"现场打字"，避免每次 rerun 把整段历史重播一遍
+            with st.chat_message("assistant"):
+                components.typewriter(msg["content"])
+            typed.add(msg["id"])
         else:
             role = "user" if msg["role"] == "user" else "assistant"
             with st.chat_message(role):
@@ -268,6 +278,12 @@ def _clarify_main(sid: str, missing: list[str]) -> None:
                 ok, _ = components.call(flow.retry_ask, sid, spinner="重试中…")
                 if ok:
                     st.rerun()
+        # 卡在某一问、不想被一直追问时，随时可以收口：把剩下的缺失项全跳过去出卡。
+        if st.button("信息够了，直接出卡", use_container_width=layout.narrow(),
+                     key=f"force_{sid}"):
+            ok, _ = components.call(flow.force_delegation, sid, spinner="正在生成委托卡…")
+            if ok:
+                st.rerun()
         return
 
     st.caption("槽位已经齐了。要调整就直接说，我会重出一版委托卡。")
@@ -287,6 +303,12 @@ def _clarify_main(sid: str, missing: list[str]) -> None:
             drafts.clear("workbench", f"revise:{sid}")
             if ok:
                 st.rerun()
+    # 想结束澄清、直接拿卡，任何时候都能收口。
+    if st.button("信息够了，直接出卡", use_container_width=layout.narrow(),
+                 key=f"force_{sid}"):
+        ok, _ = components.call(flow.force_delegation, sid, spinner="正在生成委托卡…")
+        if ok:
+            st.rerun()
 
 
 def _slot_panel(sid: str, state: dict, missing: list[str]) -> None:
@@ -343,15 +365,21 @@ def _delegation_stage(sid: str) -> None:
         return
     state = db.get_clarify_state(sid)
 
-    st.markdown("#### 委托卡")
     issues = delegation.validate(card, state["skipped"])
     if issues:
         st.warning("这份卡还有硬问题，先修再交出去：" + "；".join(issues[:4]))
     if state["skipped"]:
         st.info("本次跳过：" + clarify.summarize_skip(state["skipped"]) + "（结果卡确定性会降级）")
 
-    st.markdown("##### 复制给工作 Agent")
-    st.code(delegation.render_text(card), language=None)
+    # 委托卡作为助手发来的一条消息：上方一段说明，中间是卡本身，下方是收口动作。
+    # 结构（目标/交付物/标准）原样保留，只是从「表单」变成「对话气泡」。
+    with st.chat_message("assistant"):
+        st.markdown(
+            "这是我替你整理好的委托卡。第一段是你最初的构想，下面是结构化的目标、交付物和成功标准——"
+            "直接复制给工作 Agent 就行。哪里不对，告诉我，我重写。"
+        )
+        st.code(delegation.render_text(card), language=None)
+        st.caption("点代码框右上角的复制图标即可复制给 Agent。")
 
     c1, c2 = st.columns([1, 1], gap="small")
     if c1.button("定稿，去贴结果", type="primary", use_container_width=True):
@@ -362,7 +390,15 @@ def _delegation_stage(sid: str) -> None:
         if ok:
             st.rerun()
 
-    with st.expander("编辑委托卡（可选）", expanded=False):
+    with st.expander("手动调整委托卡（可选）", expanded=False):
+        if card.get("brief"):
+            st.text_area(
+                "原始构想（自动保留，不可改）",
+                card["brief"],
+                height=80,
+                disabled=True,
+                label_visibility="collapsed",
+            )
         with st.form(f"edit_delegation_{sid}"):
             goal = st.text_area("目标", card["goal"], height=68)
             a, b = layout.cols(2)
@@ -389,6 +425,7 @@ def _delegation_stage(sid: str) -> None:
                     "forbidden": forbidden,
                     "success_criteria": rows,
                     "keywords": [k for k in kw.replace("，", "、").split("、") if k.strip()],
+                    "brief": card.get("brief", ""),
                 },
             )
             st.rerun()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import re
+import time
 
 import streamlit as st
 
@@ -86,6 +87,20 @@ def call(fn, *args, spinner: str | None = None, **kwargs):
     except Exception as exc:  # noqa: BLE001 原型阶段统一兜住
         st.error(str(exc))
         return False, None
+
+
+def typewriter(text: str, speed: float = 0.012) -> None:
+    """逐字显示，制造「模型在实时输出」的观感。只用于澄清提问这类短文本。
+
+    调用方负责保证同一条消息只调用一次（用消息 id 去重），否则每次 rerun 都会重播。
+    """
+    box = st.empty()
+    shown = ""
+    for ch in str(text):
+        shown += ch
+        box.markdown(shown + "▌")
+        time.sleep(speed)
+    box.markdown(shown)
 
 
 # ---------------------------------------------------------------- 草稿输入

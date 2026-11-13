@@ -11,6 +11,10 @@ import json
 from . import clarify, db, delegation, llm, narrate, prompts, review, rules
 from .models import BRANCH_LABELS, SLOT_LABELS
 
+# 澄清轮次硬上限：无论模型是否填完，到这个数就强制用现有信息出卡。
+# 防止弱模型/演示模式陷入"一直在问同一件事"的死循环。
+MAX_CLARIFY_ROUNDS = 12
+
 
 # ---------------------------------------------------------------- 澄清阶段
 
@@ -102,6 +106,18 @@ def ask(sid: str, round_no: int, user_text: str = "") -> None:
         ensure_delegation(sid)
         return
 
+    # 轮次上限：宁可带缺口出卡，也绝不无限循环。
+    if state["round_count"] + 1 >= MAX_CLARIFY_ROUNDS and missing:
+        db.add_exchange(
+            sid,
+            round_no,
+            f"已到澄清轮次上限（{MAX_CLARIFY_ROUNDS}），我用现有信息直接出卡；"
+            "缺的项你可以在委托卡里补或在结果卡阶段纠偏。",
+            kind="note",
+        )
+        ensure_delegation(sid)
+        return
+
     question = str(raw.get("next_question") or "").strip() or clarify.question_for(missing[0])
     db.add_exchange(sid, round_no, question, kind="question")
 
@@ -140,16 +156,37 @@ def _current_round(sid: str) -> int:
 
 def ensure_delegation(sid: str) -> str:
     state = db.get_clarify_state(sid)
-    card = delegation.generate(state["slots"], state["skipped"])
+    sess = db.get_session(sid) or {}
+    brief = (sess.get("brief") or "").strip()
+    card = delegation.generate(state["slots"], state["skipped"], brief)
     did = delegation.save(sid, card)
     db.update_stage(sid, "delegation_ready")
     return did
 
 
 def update_delegation(sid: str, card: dict) -> str:
+    # 编辑委托卡时保留原始构想：除非调用方显式给了新 brief，否则沿用库里那版。
+    existing = db.latest_delegation(sid) or {}
+    if not str(card.get("brief") or "").strip():
+        card = dict(card)
+        card["brief"] = existing.get("brief", "")
     did = delegation.save(sid, card)
     db.update_stage(sid, "delegation_ready")
     return did
+
+
+def force_delegation(sid: str) -> None:
+    """用户主动喊停澄清：把剩下的缺失槽位全部标记跳过，直接出卡。"""
+    state = db.get_clarify_state(sid)
+    if clarify.is_ready(state["slots"], state["skipped"]):
+        ensure_delegation(sid)
+        return
+    missing = clarify.missing(state["slots"], state["skipped"])
+    flow_skip = [s for s in missing if s not in {x.get("slot") for x in state["skipped"]}]
+    if flow_skip:
+        skip_slots(sid, flow_skip, "用户选择直接出卡，剩余项先跳过")
+    else:
+        ensure_delegation(sid)
 
 
 def to_awaiting(sid: str) -> None:
